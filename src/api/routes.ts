@@ -97,8 +97,16 @@ router.delete('/accounts/:id', (req, res) => {
 // ─── Campaigns ────────────────────────────────────────────────────────────────
 
 router.get('/campaigns', (_req, res) => {
-  try { res.json(db.prepare('SELECT * FROM campaigns ORDER BY createdAt DESC').all()); }
-  catch (e: any) { res.status(500).json({ error: e.message }); }
+  try {
+    // Try with createdAt first, fallback to last_updated
+    let campaigns;
+    try {
+      campaigns = db.prepare('SELECT * FROM campaigns ORDER BY createdAt DESC').all();
+    } catch {
+      campaigns = db.prepare('SELECT * FROM campaigns ORDER BY last_updated DESC').all();
+    }
+    res.json(campaigns);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────

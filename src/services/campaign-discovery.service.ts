@@ -60,8 +60,8 @@ class CampaignDiscoveryService {
           { retries: 3, baseDelayMs: 2000, label: `campaigns:${account.username}` }
         );
 
-        if (data?.data?.currentUser?.inventory?.campaigns) {
-          const campaigns = data.data.currentUser.inventory.campaigns;
+        if (data?.data?.currentUser?.dropCampaigns) {
+          const campaigns = data.data.currentUser.dropCampaigns;
           logInfo(`[CampaignDiscovery] Found ${campaigns.length} campaign(s) for ${account.username}`);
           
           let discovered = 0;
@@ -89,15 +89,24 @@ class CampaignDiscoveryService {
   }
 
   private async fetchCampaigns(token: string, clientId: string) {
+    // Use full query - minimal fields only
     const query = {
       operationName: 'InventoryViewCampaigns',
-      extensions: {
-        persistedQuery: {
-          version: 1,
-          sha256Hash: 'c6a332a9695a4615c524b4bb1e61b02e5d0d65229477504a18fb63fb0c347b05'
+      variables: {},
+      query: `query InventoryViewCampaigns {
+        currentUser {
+          id
+          dropCampaigns {
+            id
+            name
+            game {
+              displayName
+            }
+            imageURL
+            status
+          }
         }
-      },
-      variables: {}
+      }`
     };
 
     const requestBody = JSON.stringify(query);
@@ -192,34 +201,13 @@ class CampaignDiscoveryService {
 
   private processCampaign(campaign: any): boolean {
     try {
-      // Extract campaign data
+      // Extract campaign data from updated schema
       const campaignId = campaign.id;
       const name = campaign.name || 'Unknown Campaign';
       const game = campaign.game?.displayName || null;
-      const requiredMinutes = campaign.requiredMinutesWatched || 0;
-      const imageUrl = campaign.imageURL || null;
-      const status = 'active'; // All discovered campaigns are considered active
-      
-      // Check if campaign is still active (not expired)
-      const endTime = campaign.endsAt ? new Date(campaign.endsAt) : null;
-      const startTime = campaign.startsAt ? new Date(campaign.startsAt) : null;
-      const now = new Date();
-      
-      if (endTime && endTime < now) {
-        logDebug(`[CampaignDiscovery] Skipping expired campaign: ${name}`);
-        return false;
-      }
-
-      if (startTime && startTime > now) {
-        logDebug(`[CampaignDiscovery] Skipping future campaign: ${name}`);
-        return false;
-      }
-
-      // Log allowed channels if present
-      if (campaign.channels && Array.isArray(campaign.channels)) {
-        const channelCount = campaign.channels.length;
-        logDebug(`[CampaignDiscovery] Campaign '${name}' allows ${channelCount} channel(s)`);
-      }
+      const imageUrl = campaign.imageURL || campaign.image_url || null;
+      const status = campaign.status || 'active';
+      const requiredMinutes = 0; // We'll get this from drop indexing service
 
       // Upsert campaign into database
       db.prepare(`
@@ -234,7 +222,7 @@ class CampaignDiscoveryService {
           last_updated = excluded.last_updated
       `).run(campaignId, name, game, requiredMinutes, status, imageUrl);
 
-      logInfo(`[CampaignDiscovery] ✅ Campaign discovered: ${name} (${game}) - ${requiredMinutes}min required`);
+      logInfo(`[CampaignDiscovery] ✅ Campaign discovered: ${name} (${game})`);
       return true;
     } catch (e: any) {
       logError(`[CampaignDiscovery] Error processing campaign: ${e.message}`);
