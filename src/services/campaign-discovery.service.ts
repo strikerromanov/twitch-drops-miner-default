@@ -38,7 +38,7 @@ class CampaignDiscoveryService {
       try {
         const campaigns = await withRetry(
           () => this.fetchCampaignsHelix(account.accessToken, clientId),
-          { retries: 3, baseDelayMs: 2000, label: `campaigns:${account.username}` }
+          { retries: 1, baseDelayMs: 1000, label: `campaigns:${account.username}` }
         );
 
         if (campaigns && campaigns.length > 0) {
@@ -58,9 +58,12 @@ class CampaignDiscoveryService {
             accountUsername: account.username
           });
           break; // Success - no need to try other accounts
+        } else {
+          logDebug('[CampaignDiscovery] No campaigns returned from Helix API (using manual campaigns instead)');
         }
       } catch (e: any) {
-        logError(`[CampaignDiscovery] Failed for ${account.username}: ${e.message}`);
+        logDebug(`[CampaignDiscovery] Helix API not available: ${e.message} (manual campaigns will be used)`);
+        // Don't log errors as severe since manual campaigns work fine
         // Continue to next account
       }
     }

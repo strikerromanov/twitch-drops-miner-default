@@ -155,6 +155,7 @@ addCol('active_streams',   'streamer_id',      'TEXT');
 addCol('logs',             'streamer_id',      'INTEGER');
 addCol('logs',             'type',             'TEXT');
 addCol('drops',            'claimed',          'INTEGER DEFAULT 0');
+addCol('drops',            'last_updated',     'TEXT    DEFAULT (datetime(\'now\'))');
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 [

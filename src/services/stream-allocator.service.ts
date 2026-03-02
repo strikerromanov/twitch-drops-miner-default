@@ -4,7 +4,7 @@ import { withRetry } from './token-refresh.service.js';
 
 type Broadcaster = (d: object) => void;
 const ALLOCATE_MS = 5 * 60 * 1000; // Run every 5 minutes
-const MAX_VIEWERS = 500; // Prefer streams with fewer viewers for easier drops
+const MAX_VIEWERS = 2000; // Prefer streams with fewer viewers for easier drops
 
 interface TwitchStream {
   id: string;
@@ -149,17 +149,34 @@ class StreamAllocatorService {
         }
 
         const streams = await this.fetchStreamsForGame(gameId);
-        
+
         if (!streams || streams.length === 0) {
           logDebug(`[StreamAllocator] No live streams for game: ${gameName}`);
           continue;
         }
 
+        logInfo(`[StreamAllocator] DEBUG: Total streams fetched: ${streams.length}`);
+        logInfo(`[StreamAllocator] DEBUG: Sample streams: ${JSON.stringify(streams.slice(0, 3).map(s => ({
+          name: s.user_name,
+          viewers: s.viewer_count,
+          game_id: s.game_id
+        })))}`);
+
         // Filter streams by viewer count (prefer lower viewer counts)
-        const suitableStreams = streams.filter(s => s.viewer_count < MAX_VIEWERS && s.is_live);
-        
+        // Note: Twitch Helix API only returns live streams, so no is_live check needed
+        const suitableStreams = streams.filter(s => (s.viewer_count || 0) < MAX_VIEWERS);
+
+        logInfo(`[StreamAllocator] DEBUG: Suitable streams after filter: ${suitableStreams.length}`);
+
         if (suitableStreams.length === 0) {
-          logDebug(`[StreamAllocator] No suitable streams (low viewer count) for game: ${gameName}`);
+          logWarn(`[StreamAllocator] No suitable streams found! All streams had too many viewers (> ${MAX_VIEWERS})`);
+          // Log some sample streams to debug
+          if (streams.length > 0) {
+            const maxViewers = Math.max(...streams.map(s => s.viewer_count || 0));
+            logWarn(`[StreamAllocator] Highest viewer count: ${maxViewers}. Consider increasing MAX_VIEWERS.`);
+            const samples = streams.slice(0, 5).map(s => `${s.user_name}: ${s.viewer_count} viewers`).join('; ');
+            logWarn(`[StreamAllocator] Sample streams: ${samples}`);
+          }
           continue;
         }
 
@@ -321,6 +338,22 @@ class StreamAllocatorService {
       INSERT INTO active_streams (account_id, streamer, streamer_id, game, viewer_count, started_at)
       VALUES (?, ?, ?, ?, ?, datetime('now'))
     `).run(accountId, stream.user_login, stream.user_id, stream.game_name, stream.viewer_count);
+
+    // Also add to followed_channels so points can be claimed via PubSub
+    // First try to update if exists
+    const updated = db.prepare(`
+      UPDATE followed_channels
+      SET status='live', viewer_count=?, game_name=?
+      WHERE account_id=? AND streamer=?
+    `).run(stream.viewer_count, stream.game_name, accountId, stream.user_login).changes;
+
+    // If no rows updated, insert new
+    if (updated === 0) {
+      db.prepare(`
+        INSERT INTO followed_channels (account_id, streamer, streamer_id, status, game_name, viewer_count, points)
+        VALUES (?, ?, ?, 'live', ?, ?, 0)
+      `).run(accountId, stream.user_login, stream.user_id, stream.game_name, stream.viewer_count);
+    }
 
     logInfo(`[StreamAllocator] ✅ Allocated account ${accountId} to ${stream.user_name} (${stream.game_name}) - ${stream.viewer_count} viewers`);
   }

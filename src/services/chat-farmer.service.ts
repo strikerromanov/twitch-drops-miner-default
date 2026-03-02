@@ -1,5 +1,6 @@
 import db from '../core/db.js';
 import { logInfo, logError, logWarn, logDebug } from '../core/logger.js';
+import WebSocket from 'ws';
 
 type Broadcaster = (d: object) => void;
 
@@ -57,15 +58,12 @@ class ChatFarmerService {
       return;
     }
 
-    const WS: any = (globalThis as any).WebSocket;
-    if (!WS) { logWarn('[ChatFarmer] WebSocket not available in this environment'); return; }
-
     let ws: any = null;
     let pingId: NodeJS.Timeout | null = null;
     let alive = true;
 
     const connect = () => {
-      ws = new WS('wss://pubsub-edge.twitch.tv');
+      ws = new WebSocket('wss://pubsub-edge.twitch.tv');
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'LISTEN', nonce: Math.random().toString(36).slice(2),
           data: { topics, auth_token: account.accessToken } }));
