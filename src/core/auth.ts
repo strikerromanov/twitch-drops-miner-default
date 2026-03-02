@@ -102,7 +102,12 @@ export async function getUserInfo(accessToken: string, clientId: string): Promis
       'Client-Id':     clientId,
     },
   });
-  if (!res.ok) throw new Error(`getUserInfo failed ${res.status}`);
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`getUserInfo failed ${res.status}: ${body}`);
+  }
+
   const data = await res.json();
   if (!data.data?.[0]) throw new Error('No user data returned from Twitch');
   return data.data[0];

@@ -7,6 +7,35 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://www.docker.com)
 [![GitHub](https://img.shields.io/badge/Gateway-2.1.0-purple)](https://github.com/strikerromanov/twitch-drops-miner-default)
 
+## ⚠️ IMPORTANT - Client ID Required
+
+**This application requires your own Twitch Client ID to work.**
+
+The default Twitch web Client-ID does NOT work with OAuth authentication.
+
+### Getting Your Client ID (Required)
+
+1. Go to **https://dev.twitch.tv/console**
+2. Click **"Register Your Application"**
+3. Fill in the form:
+   - **Name:** `Twitch Drops Farmer` (or any name you like)
+   - **OAuth Redirect URLs:** `http://localhost:3000` (or your deployment URL)
+   - **Category:** `Website Integration` (or any category)
+4. Click **"Create"**
+5. Copy your **Client ID** (you don't need Client Secret for Device Code Flow)
+
+### Set Your Client ID
+
+Once you have your Client ID, set it in the app:
+
+```bash
+curl -X PUT http://localhost:3000/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"twitchClientId":"YOUR_CLIENT_ID_HERE"}'
+```
+
+Or via the web UI at `http://localhost:3000` → Settings
+
 ## ✨ Features
 
 ### 🎯 Core Features
@@ -49,60 +78,242 @@ npm start
 
 ## ⚙️ Configuration
 
-### 1. Twitch API Setup
+### Required: Twitch Client ID
 
-1. Go to [Twitch Dev Console](https://dev.twitch.tv/console/apps)
-2. Create a new application
-3. Copy your **Client ID**
-4. Note: No Client Secret needed for Device Code Flow
+1. Go to https://dev.twitch.tv/console
+2. Register a new application
+3. Copy the Client ID
+4. Set it in the app settings
 
-### 2. Configure Application
+### Optional Settings
 
-1. Open the web interface
-2. Go to **Settings** → Enter your **Twitch Client ID**
-3. Click **Save Changes**
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `THEME_MODE` | UI theme (dark/light/auto) | `auto` |
+| `NOTIFY_DROPS` | Drop notifications | `true` |
+| `NOTIFY_POINTS` | Point claim notifications | `true` |
+| `NOTIFY_ERRORS` | Error notifications | `true` |
 
-### 3. Add Account
+## 📖 Setup Guide
 
-1. Click **"Add Account via Device Code"**
-2. A device code will be displayed
-3. Go to [twitch.tv/activate](https://www.twitch.tv/activate)
-4. Enter the code
-5. Approve the authorization
+### 1. Configure Client ID
 
-### 4. Start Farming
+```bash
+curl -X PUT http://localhost:3000/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"twitchClientId":"your_client_id_here"}'
+```
 
-1. Toggle your account to **Farming** status
-2. Watch drops and points accumulate automatically!
+### 2. Add Your Twitch Account
 
-## 📊 Features Explained
+1. Open `http://localhost:3000`
+2. Go to **Accounts** page
+3. Click **"Add Account"**
+4. You'll see a code (e.g., `ABCD1234`)
+5. Go to `https://www.twitch.tv/activate`
+6. Enter the code and authorize
+7. The app will automatically save your account
 
-### Drop Farming
-- Fetches campaigns from Twitch GraphQL API
-- Tracks progress per campaign
-- Automatically switches streams to complete drops
-- Supports multiple simultaneous campaigns
+### 3. Start Farming
 
-### Point Farming
-- Uses WebSocket PubSub for real-time bonus detection
-- Claims bonus points automatically
-- Tracks all claims in database
-- Works on both followed channels and allocated streams
+1. Go to **Accounts** page
+2. Toggle account to **"Farming"** status
+3. The app will automatically:
+   - Discover active drop campaigns
+   - Allocate you to suitable streams
+   - Monitor drop progress
+   - Claim bonus points
 
-### Betting Engine
-- **Kelly Criterion** - Mathematical optimal betting
-- **Risk Levels**:
-  - Conservative: Half Kelly (safer, slower growth)
-  - Moderate: Three-quarter Kelly (balanced)
-  - Aggressive: Full Kelly (maximum growth, higher risk)
-- **Auto-Skip** - Avoids poor performing streamers
-- **Sample Size Building** - Starts conservative, increases with data
+## 📡 API Endpoints
 
-### Token Management
-- Checks token expiry every 30 minutes
-- Refreshes tokens within 60 minutes of expiry
-- Updates database with new tokens
-- Prevents authentication interruptions
+### Authentication
+```bash
+# Request device code
+POST /api/auth/device
+Body: { "clientId": "your_client_id" }
+
+# Poll for token
+POST /api/auth/device/poll
+Body: { "clientId": "your_client_id", "deviceCode": "..." }
+
+# Check status
+GET /api/auth/status
+```
+
+### Settings
+```bash
+GET  /api/settings
+PUT  /api/settings
+GET  /api/settings/meta
+```
+
+### Accounts
+```bash
+GET     /api/accounts
+POST    /api/accounts/:id/toggle
+DELETE  /api/accounts/:id
+```
+
+### Campaigns
+```bash
+GET /api/campaigns
+```
+
+### Stats & Health
+```bash
+GET /api/stats
+GET /api/health
+GET /api/logs
+```
+
+### Betting
+```bash
+GET /api/betting/stats
+GET /api/betting/history
+POST /api/betting/toggle
+POST /api/betting/config
+```
+
+## 🎰 Betting System
+
+The Kelly Criterion is used for optimal bet sizing:
+
+**Formula:** f* = (bp - q) / b
+
+Where:
+- b = odds - 1
+- p = probability of winning
+- q = probability of losing (1 - p)
+
+### Strategies
+
+1. **Conservative** - Half Kelly (0.5 × f*)
+2. **Moderate** - Three-quarter Kelly (0.75 × f*)
+3. **Aggressive** - Full Kelly (1.0 × f*)
+
+### Features
+
+- Automatic streamer analysis
+- Win/loss tracking
+- ROI calculation
+- Configurable max bet percentage
+
+## 🔧 Services Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│              Twitch Drops Farmer                │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  ┌─────────────┐  ┌──────────────┐            │
+│  │   Token     │  │  Campaign    │            │
+│  │   Refresh   │  │  Discovery   │            │
+│  │   Service   │  │   Service    │            │
+│  └──────┬──────┘  └──────┬───────┘            │
+│         │                 │                     │
+│         ▼                 ▼                     │
+│  ┌────────────────────────────────┐           │
+│  │     Service Watchdog          │           │
+│  │  (Auto-restart on failure)    │           │
+│  └────────────────────────────────┘           │
+│                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
+│  │  Stream  │  │   Drop   │  │   Chat    │  │
+│  │Allocator │  │ Indexer  │  │  Farmer   │  │
+│  └────┬─────┘  └────┬─────┘  └─────┬─────┘  │
+│       │             │              │          │
+│       ▼             ▼              ▼          │
+│  ┌─────────────────────────────────────┐    │
+│  │        Multi-Account Coordination    │    │
+│  └─────────────────────────────────────┘    │
+│                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
+│  │  Point   │  │  Followed│  │  Betting  │  │
+│  │ Claimer  │  │ Channels │  │  Service  │  │
+│  └──────────┘  └──────────┘  └───────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+### Service Details
+
+| Service | Interval | Description |
+|---------|----------|-------------|
+| Token Refresh | 30 min | Refreshes tokens before expiry |
+| Campaign Discovery | 10 min | Finds active campaigns via Helix API |
+| Stream Allocator | 5 min | Allocates accounts to suitable streams |
+| Drop Indexer | 1 min | Monitors drop progress |
+| Point Claimer | 2 min | Claims available bonus points |
+| Chat Farmer | Continuous | Listens for bonus claims via PubSub |
+| Betting Service | 1 min | Places bets on predictions |
+
+## 🐛 Troubleshooting
+
+### "Client ID is invalid" or 404 errors
+
+**Solution:** You must use your own Twitch Client ID from https://dev.twitch.tv/console
+
+The default web Client ID (`kimne78kx3ncx6brgo4mv6wki5h1ko`) doesn't work with OAuth.
+
+### Account shows as "error"
+
+**Solution:** Token may have expired. Re-add your account.
+
+### No streams being allocated
+
+**Possible causes:**
+- No active campaigns for your account
+- All campaigns have ended
+- No suitable streams found
+
+### Points not claiming
+
+**Possible causes:**
+- Internet connection issues
+- Account not in "farming" status
+- PubSub connection failed
+
+## 📝 Environment Variables
+
+```bash
+# Database
+DATABASE_PATH=/path/to/database.db
+
+# Server
+PORT=3000
+NODE_ENV=production
+
+# Twitch (optional - can be set via UI)
+TWITCH_CLIENT_ID=your_client_id_here
+```
+
+## 📁 Project Structure
+
+```
+twitch-drops-miner-default/
+├── src/
+│   ├── api/              # API routes
+│   │   ├── routes.ts     # Main API endpoints
+│   │   └── dashboard-routes.ts
+│   ├── core/             # Core utilities
+│   │   ├── db.ts         # Database schema & setup
+│   │   ├── auth.ts       # OAuth & device code flow
+│   │   └── logger.ts     # Logging utilities
+│   └── services/         # Background services
+│       ├── token-refresh.service.ts
+│       ├── campaign-discovery.service.ts
+│       ├── stream-allocator.service.ts
+│       ├── drop-indexer.service.ts
+│       ├── point-claimer.service.ts
+│       ├── chat-farmer.service.ts
+│       ├── followed-channels.service.ts
+│       ├── betting.service.ts
+│       └── service-watchdog.ts
+├── dist/                 # Built frontend
+├── public/               # Frontend source
+├── server.ts             # Main server entry
+├── package.json
+└── tsconfig.json
+```
 
 ## 🛠️ Development
 
@@ -113,123 +324,94 @@ npm install
 # Run in development mode
 npm run dev
 
-# Build for production
+# Build frontend only
+npm run build
+
+# Build server only
+npm run build:server
+
+# Build everything
 npm run build:all
 
 # Run tests
 npm test
-
-# Start production server
-npm start
 ```
 
-## 📝 API Endpoints
+## 🚀 Deployment
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/stats` | GET | Get overall statistics |
-| `/api/accounts` | GET | List all accounts |
-| `/api/accounts/:id/toggle` | POST | Toggle farming status |
-| `/api/auth/device` | POST | Request device code |
-| `/api/auth/device/poll` | POST | Poll for authorization |
-| `/api/settings` | GET/POST | Manage settings |
-| `/api/campaigns` | GET | Get drop campaigns |
-
-## 🔧 Advanced Settings
-
-| Setting | Range | Default | Description |
-|---------|-------|---------|-------------|
-| `maxBetPercentage` | 1-20% | 5% | Max bet per wager |
-| `bettingStrategy` | conservative/moderate/aggressive | conservative | Risk level |
-| `tokenRefreshInterval` | 5-60 min | 30 min | Token check frequency |
-
-## 📈 Technology Stack
-
-- **Backend:** Node.js + Express + TypeScript
-- **Database:** SQLite with better-sqlite3
-- **Real-time:** WebSocket (ws)
-- **Container:** Docker (Alpine Linux)
-
-## 🐳 Docker Deployment
-
-### Environment Variables
+### Docker
 
 ```bash
-PORT=3000
-NODE_ENV=production
-DATABASE_PATH=/app/data/farm.db
+docker-compose up -d
 ```
 
-### Docker Compose
+### Manual
 
-```yaml
-services:
-  twitch-drops-farmer:
-    build: .
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
-```
-
-## 📁 Project Structure
-
-```
-twitch-drops-miner-default/
-├── src/
-│   ├── core/           # Core utilities (auth, db, logger)
-│   ├── services/       # Background services
-│   │   ├── betting.service.ts
-│   │   ├── campaign-discovery.service.ts
-│   │   ├── chat-farmer.service.ts
-│   │   ├── drop-indexer.service.ts
-│   │   ├── followed-channels.service.ts
-│   │   ├── point-claimer.service.ts
-│   │   ├── stream-allocator.service.ts
-│   │   └── token-refresh.service.ts
-│   └── api/            # API routes
-├── server.ts           # Main server entry point
-├── docker-compose.yml
-└── package.json
-```
-
-## 🔍 Troubleshooting
-
-### Container won't start
 ```bash
-# Check logs
-docker compose logs -f
+NODE_ENV=production npm start
 ```
 
-### Points not claiming
-1. Check account is in "Farming" status
-2. Verify Client ID is correct
-3. Check logs for connection errors
+### Using PM2
 
-### Betting not working
-1. Ensure betting is enabled
-2. Verify account has sufficient points
-3. Check streamer statistics
+```bash
+npm install -g pm2
+pm2 start npm --name "twitch-drops" -- start
+pm2 save
+pm2 startup
+```
+
+## 📊 Monitoring
+
+### Health Check
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+Response includes:
+- Service status
+- System uptime
+- Memory usage
+- Active campaigns
+
+### Real-time Updates
+
+Connect to WebSocket for live updates:
+
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(data);
+};
+```
+
+## 📝 License
+
+MIT License - see LICENSE file for details
 
 ## 🤝 Contributing
 
 Contributions welcome! Please:
+
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
 
-## 📄 License
-
-This project is licensed under the MIT License.
-
 ## ⚠️ Disclaimer
 
-This tool is for educational purposes only. Please respect Twitch's Terms of Service.
+This tool is for educational purposes only. Use responsibly and in accordance with Twitch's Terms of Service.
+
+## 🙏 Credits
+
+Built with:
+- Express.js
+- better-sqlite3
+- WebSocket (ws)
+- Twitch Helix API
+- Twitch PubSub
 
 ---
 
-**Made with ❤️ by [strikerromanov](https://github.com/strikerromanov)**
-
-**Live Demo:** http://192.168.1.99:3000
+**Made with ❤️ for the Twitch community**

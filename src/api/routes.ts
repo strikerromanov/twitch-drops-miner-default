@@ -253,7 +253,13 @@ function getClientId(body?: any): string {
 router.post('/auth/device', async (req, res) => {
   try {
     const clientId = getClientId(req.body);
-    if (!clientId) return res.status(400).json({ error: 'Twitch Client ID is required. Set it in Settings first.' });
+    if (!clientId) {
+      return res.status(400).json({
+        error: 'Twitch Client ID is required.',
+        message: 'Please get a Client ID from https://dev.twitch.tv/console and add it in Settings',
+        setupUrl: 'https://dev.twitch.tv/console'
+      });
+    }
     const resp = await requestDeviceCode(clientId);
     res.json(resp);
   } catch (e: any) {
@@ -272,6 +278,12 @@ router.post('/auth/device/poll', async (req, res) => {
 
     // DEBUG: Log token response details
     logInfo(`[Auth] Token response received - access_token length: ${tokenResponse.access_token?.length || 0}, refresh_token length: ${tokenResponse.refresh_token?.length || 0}`);
+
+    // Validate token before proceeding
+    if (!tokenResponse.access_token || tokenResponse.access_token.length < 30) {
+      logError(`[Auth] Invalid access token received: length=${tokenResponse.access_token?.length || 0}`);
+      return res.status(500).json({ error: 'Invalid access token received from Twitch' });
+    }
 
     const userInfo      = await getUserInfo(tokenResponse.access_token, clientId);
     const expiresAt     = Math.floor(Date.now() / 1000) + tokenResponse.expires_in;
@@ -293,6 +305,17 @@ router.post('/auth/device/poll', async (req, res) => {
     res.json({ success: true, user: userInfo, expires_in: tokenResponse.expires_in });
   } catch (e: any) {
     if (e.message?.includes('authorization_pending')) return res.status(202).json({ pending: true });
+
+    // Provide helpful error messages
+    if (e.message?.includes('getUserInfo failed')) {
+      logError(`Auth error: ${e.message}`);
+      return res.status(500).json({
+        error: 'Failed to get user info from Twitch',
+        message: 'The Client-ID may not be authorized for this application. Please create your own app at https://dev.twitch.tv/console',
+        details: e.message
+      });
+    }
+
     logError(`Poll: ${e.message}`);
     res.status(500).json({ error: e.message });
   }
