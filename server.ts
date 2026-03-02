@@ -26,6 +26,7 @@ import FollowedChannelsService from './src/services/followed-channels.service.js
 import PointClaimerService  from './src/services/point-claimer.service.js';
 import CampaignDiscoveryService from './src/services/campaign-discovery.service.js';
 import StreamAllocatorService   from './src/services/stream-allocator.service.js';
+import BettingService        from './src/services/betting.service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,8 +131,9 @@ const chatFarmerSvc    = new ChatFarmerService(broadcast);
 const followedSvc      = new FollowedChannelsService(db, clientId);
 const pointClaimerSvc  = new PointClaimerService(broadcast);
 
-const campaignDiscoverySvc = new CampaignDiscoveryService(db, clientId, broadcast);
-const streamAllocatorSvc   = new StreamAllocatorService(db, clientId, broadcast);
+const campaignDiscoverySvc = new CampaignDiscoveryService(broadcast);
+const streamAllocatorSvc   = new StreamAllocatorService(broadcast);
+const bettingSvc           = new BettingService(broadcast);
 
 new ServiceWatchdog('DropIndexer',      dropIndexerSvc,  broadcast).start();
 new ServiceWatchdog('ChatFarmer',       chatFarmerSvc,   broadcast).start();
@@ -140,10 +142,13 @@ new ServiceWatchdog('PointClaimer',     pointClaimerSvc, broadcast).start();
 new ServiceWatchdog('CampaignDiscovery', campaignDiscoverySvc, broadcast).start();
 new ServiceWatchdog('StreamAllocator',   streamAllocatorSvc,   broadcast).start();
 
+// Betting service is started/stopped via API, not watchdog
+bettingSvc.start();
+
 // Expose to routes for /api/health
 (global as any).services = {
   tokenRefreshSvc, dropIndexerSvc, chatFarmerSvc, followedSvc, pointClaimerSvc,
-  campaignDiscoverySvc, streamAllocatorSvc,
+  campaignDiscoverySvc, streamAllocatorSvc, bettingSvc,
 };
 (global as any).broadcast = broadcastProxy;
 

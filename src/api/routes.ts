@@ -117,25 +117,75 @@ router.get('/logs', (req, res) => {
 
 // ─── Betting ──────────────────────────────────────────────────────────────────
 
-router.get('/betting-stats', (_req, res) => {
+router.get('/betting/stats', (_req, res) => {
   try {
-    const raw: any = db.prepare(`
-      SELECT COUNT(*) as totalBets,
-        SUM(CASE WHEN outcome='won'  THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN outcome='lost' THEN 1 ELSE 0 END) as losses,
-        COALESCE(SUM(CASE WHEN outcome='won' THEN points_won-points_wagered ELSE -points_wagered END),0) as netProfit
-      FROM betting_history
-    `).get();
-    const winRate = raw.totalBets > 0 ? (raw.wins / raw.totalBets) * 100 : 0;
-    res.json({ ...raw, winRate });
+    const bettingSvc = (global as any).services?.bettingSvc;
+    if (!bettingSvc) return res.json({ error: 'Betting service not available' });
+
+    const stats = bettingSvc.getBettingStats();
+    res.json(stats);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// FIX: this was missing – Betting.tsx calls it
-router.get('/betting-history', (req, res) => {
+router.get('/betting/history', (req, res) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit || '50'), 10), 500);
     res.json(db.prepare('SELECT * FROM betting_history ORDER BY timestamp DESC LIMIT ?').all(limit));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/betting/streamers', (req, res) => {
+  try {
+    const bettingSvc = (global as any).services?.bettingSvc;
+    if (!bettingSvc) return res.json({ error: 'Betting service not available' });
+
+    const limit = Math.min(parseInt(String(req.query.limit || '10'), 10), 50);
+    const streamers = bettingSvc.getTopStreamers(limit);
+    res.json(streamers);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/betting/streamer/:streamer', (req, res) => {
+  try {
+    const bettingSvc = (global as any).services?.bettingSvc;
+    if (!bettingSvc) return res.json({ error: 'Betting service not available' });
+
+    const analysis = bettingSvc.getStreamerAnalysis(req.params.streamer);
+    res.json(analysis);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/betting/toggle', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const bettingSvc = (global as any).services?.bettingSvc;
+    if (!bettingSvc) return res.status(404).json({ error: 'Betting service not available' });
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+
+    bettingSvc.setEnabled(enabled);
+    res.json({ success: true, enabled });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/betting/config', (req, res) => {
+  try {
+    const { maxBetPercentage, strategy } = req.body;
+    const bettingSvc = (global as any).services?.bettingSvc;
+    if (!bettingSvc) return res.status(404).json({ error: 'Betting service not available' });
+
+    const config: any = {};
+    if (typeof maxBetPercentage === 'number') {
+      config.maxBetPercentage = maxBetPercentage;
+    }
+    if (typeof strategy === 'string' && ['conservative', 'moderate', 'aggressive'].includes(strategy)) {
+      config.strategy = strategy;
+    }
+
+    bettingSvc.setConfig(config);
+    res.json({ success: true, config });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

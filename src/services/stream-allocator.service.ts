@@ -318,9 +318,9 @@ class StreamAllocatorService {
 
   private assignStreamToAccount(accountId: number, stream: TwitchStream) {
     db.prepare(`
-      INSERT INTO active_streams (account_id, streamer, game, viewer_count, started_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-    `).run(accountId, stream.user_login, stream.game_name, stream.viewer_count);
+      INSERT INTO active_streams (account_id, streamer, streamer_id, game, viewer_count, started_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).run(accountId, stream.user_login, stream.user_id, stream.game_name, stream.viewer_count);
 
     logInfo(`[StreamAllocator] ✅ Allocated account ${accountId} to ${stream.user_name} (${stream.game_name}) - ${stream.viewer_count} viewers`);
   }

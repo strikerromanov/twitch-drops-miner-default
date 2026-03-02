@@ -32,12 +32,31 @@ class ChatFarmerService {
   }
 
   private connectAccount(account: any) {
-    const channels: any[] = db.prepare(
+    // Get channels from both followed_channels and active_streams
+    const followedChannels: any[] = db.prepare(
       `SELECT streamer_id FROM followed_channels WHERE account_id=? AND streamer_id IS NOT NULL`
     ).all(account.id);
-    if (!channels.length) { logDebug(`[ChatFarmer] No followed channels for ${account.username}`); return; }
 
-    const topics = channels.map((c: any) => `community-points-channel-v1.${c.streamer_id}`);
+    // Also get active farming streams - now includes streamer_id
+    const activeStreams: any[] = db.prepare(
+      `SELECT streamer_id FROM active_streams WHERE account_id=? AND streamer_id IS NOT NULL`
+    ).all(account.id);
+
+    // Merge both sources, deduplicating by streamer_id
+    const channelsMap = new Map<string, string>();
+    for (const c of followedChannels) {
+      if (c.streamer_id) channelsMap.set(c.streamer_id, c.streamer_id);
+    }
+    for (const s of activeStreams) {
+      if (s.streamer_id) channelsMap.set(s.streamer_id, s.streamer_id);
+    }
+
+    const topics = Array.from(channelsMap.keys()).map(id => `community-points-channel-v1.${id}`);
+    if (!topics.length) {
+      logDebug(`[ChatFarmer] No channels for ${account.username} - will retry on next cycle`);
+      return;
+    }
+
     const WS: any = (globalThis as any).WebSocket;
     if (!WS) { logWarn('[ChatFarmer] WebSocket not available in this environment'); return; }
 
