@@ -269,6 +269,10 @@ router.post('/auth/device/poll', async (req, res) => {
     if (!clientId || !deviceCode) return res.status(400).json({ error: 'clientId and deviceCode required' });
 
     const tokenResponse = await pollForToken(clientId, deviceCode, interval || 5);
+
+    // DEBUG: Log token response details
+    logInfo(`[Auth] Token response received - access_token length: ${tokenResponse.access_token?.length || 0}, refresh_token length: ${tokenResponse.refresh_token?.length || 0}`);
+
     const userInfo      = await getUserInfo(tokenResponse.access_token, clientId);
     const expiresAt     = Math.floor(Date.now() / 1000) + tokenResponse.expires_in;
 

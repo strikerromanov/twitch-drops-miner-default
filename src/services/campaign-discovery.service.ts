@@ -10,8 +10,6 @@ class CampaignDiscoveryService {
   constructor(private broadcast: Broadcaster = () => {}) {}
 
   start() {
-    logInfo('[CampaignDiscovery] DEBUG: Current time: ' + new Date().toISOString());
-    logInfo('[CampaignDiscovery] DEBUG: DB path: ' + (process.env.DATABASE_PATH || 'default (database.db in working directory)'));
     logInfo('[CampaignDiscovery] Starting');
     this.syncCampaigns();
     this.syncId = setInterval(() => this.syncCampaigns(), SYNC_MS);
@@ -22,29 +20,14 @@ class CampaignDiscoveryService {
   }
 
   async syncCampaigns() {
-    logInfo('[CampaignDiscovery] DEBUG: syncCampaigns() called');
-    logInfo('[CampaignDiscovery] DEBUG: Current time: ' + new Date().toISOString());
-    logInfo('[CampaignDiscovery] DEBUG: Querying accounts table...');
-    logInfo('[CampaignDiscovery] DEBUG: DB path: ' + (process.env.DATABASE_PATH || 'default (database.db in working directory)'));
-    
     const accounts: any[] = db.prepare(`SELECT id,username,accessToken FROM accounts WHERE status!='error'`).all();
-    
-    logInfo(`[CampaignDiscovery] DEBUG: Found ${accounts.length} accounts`);
-    if (accounts.length > 0) {
-      logInfo(`[CampaignDiscovery] DEBUG: Accounts: ${JSON.stringify(accounts.map(a => ({id: a.id, username: a.username, status: a.status})))}`);
-    } else {
-      logWarn('[CampaignDiscovery] DEBUG: No accounts returned from query');
-    }
-    
+
     if (!accounts.length) {
       logWarn('[CampaignDiscovery] No active accounts - skipping campaign discovery');
       return;
     }
 
-    logInfo('[CampaignDiscovery] DEBUG: Getting client ID from settings table...');
     const clientId = this.getClientId();
-    logInfo(`[CampaignDiscovery] DEBUG: Client ID: ${clientId ? 'Found' : 'NOT FOUND'}`);
-    
     if (!clientId) {
       logWarn('[CampaignDiscovery] No client ID - skipping campaign discovery');
       return;
@@ -53,24 +36,21 @@ class CampaignDiscoveryService {
     // Try each account until we get a successful response
     for (const account of accounts) {
       try {
-        logDebug(`[CampaignDiscovery] DEBUG: Attempting account ${account.id} (${account.username})`);
-        
-        const data = await withRetry(
-          () => this.fetchCampaigns(account.accessToken, clientId),
+        const campaigns = await withRetry(
+          () => this.fetchCampaignsHelix(account.accessToken, clientId),
           { retries: 3, baseDelayMs: 2000, label: `campaigns:${account.username}` }
         );
 
-        if (data?.data?.currentUser?.dropCampaigns) {
-          const campaigns = data.data.currentUser.dropCampaigns;
+        if (campaigns && campaigns.length > 0) {
           logInfo(`[CampaignDiscovery] Found ${campaigns.length} campaign(s) for ${account.username}`);
-          
+
           let discovered = 0;
           for (const campaign of campaigns) {
             if (this.processCampaign(campaign)) {
               discovered++;
             }
           }
-          
+
           logInfo(`[CampaignDiscovery] Discovered/updated ${discovered} active campaign(s)`);
           this.broadcast({
             type: 'campaigns_discovered',
@@ -78,8 +58,6 @@ class CampaignDiscoveryService {
             accountUsername: account.username
           });
           break; // Success - no need to try other accounts
-        } else {
-          logWarn('[CampaignDiscovery] No campaigns data in response');
         }
       } catch (e: any) {
         logError(`[CampaignDiscovery] Failed for ${account.username}: ${e.message}`);
@@ -88,126 +66,60 @@ class CampaignDiscoveryService {
     }
   }
 
-  private async fetchCampaigns(token: string, clientId: string) {
-    // Use full query - minimal fields only
-    const query = {
-      operationName: 'InventoryViewCampaigns',
-      variables: {},
-      query: `query InventoryViewCampaigns {
-        currentUser {
-          id
-          dropCampaigns {
-            id
-            name
-            game {
-              displayName
-            }
-            imageURL
-            status
-          }
-        }
-      }`
-    };
-
-    const requestBody = JSON.stringify(query);
-    const requestUrl = 'https://gql.twitch.tv/gql';
-
-    // === EXTREME LOGGING: BEFORE REQUEST ===
-    logInfo(`[CampaignDiscovery] ═════════════════════════════════════════`);
-    logInfo(`[CampaignDiscovery] GraphQL Request Initiated`);
-    logInfo(`[CampaignDiscovery] Request URL: ${requestUrl}`);
-    logInfo(`[CampaignDiscovery] Request Method: POST`);
-    logInfo(`[CampaignDiscovery] Authorization: Bearer ${token.substring(0, 20)}...${token.substring(Math.max(0, token.length - 5))}`);
-    logInfo(`[CampaignDiscovery] Client-ID: ${clientId}`);
-    logInfo(`[CampaignDiscovery] Request Body: ${requestBody}`);
-    logInfo(`[CampaignDiscovery] Headers: ${JSON.stringify({
-      'Authorization': `Bearer ${token.substring(0, 20)}...`,
-      'Client-Id': clientId,
-      'Content-Type': 'application/json'
-    }, null, 2)}`);
-    logInfo(`[CampaignDiscovery] ═════════════════════════════════════════`);
-
-    let response: Response;
+  // Use Helix API instead of GraphQL - more reliable
+  private async fetchCampaignsHelix(token: string, clientId: string): Promise<any[]> {
     try {
-      response = await fetch(requestUrl, {
-        method: 'POST',
+      // First try to get the inventory through the drops API
+      const response = await fetch('https://api.twitch.tv/helix/inventory/drops', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Client-Id': clientId,
-          'Content-Type': 'application/json'
         },
-        body: requestBody
       });
-    } catch (error: any) {
-      logError(`[CampaignDiscovery] ═════════════════════════════════════════`);
-      logError(`[CampaignDiscovery] FETCH EXCEPTION`);
-      logError(`[CampaignDiscovery] Exception Message: ${error.message}`);
-      logError(`[CampaignDiscovery] Exception Stack: ${error.stack}`);
-      logError(`[CampaignDiscovery] ═════════════════════════════════════════`);
-      throw error;
-    }
 
-    // === EXTREME LOGGING: AFTER RESPONSE ===
-    const responseStatus = response.status;
-    const responseStatusText = response.statusText;
-    const responseHeaders = Object.fromEntries(response.headers.entries());
-    
-    logInfo(`[CampaignDiscovery] ═════════════════════════════════════════`);
-    logInfo(`[CampaignDiscovery] GraphQL Response Received`);
-    logInfo(`[CampaignDiscovery] Response Status: ${responseStatus} ${responseStatusText}`);
-    logInfo(`[CampaignDiscovery] Response Headers: ${JSON.stringify(responseHeaders, null, 2)}`);
+      if (!response.ok) {
+        const text = await response.text();
+        logError(`[CampaignDiscovery] Helix API error: ${response.status} ${text}`);
+        throw new Error(`Helix API ${response.status}: ${text}`);
+      }
 
-    const responseBody = await response.text();
-    logInfo(`[CampaignDiscovery] Response Body: ${responseBody}`);
-    logInfo(`[CampaignDiscovery] Response Body Length: ${responseBody.length} characters`);
-    
-    if (responseStatus === 401) {
-      logError(`[CampaignDiscovery] ❌ HTTP 401 Unauthorized - Token may be expired`);
-      logError(`[CampaignDiscovery] Body: ${responseBody}`);
-      throw new Error('Unauthorized - token may be expired');
-    }
-    if (responseStatus === 429) {
-      logError(`[CampaignDiscovery] ❌ HTTP 429 Rate Limited`);
-      logError(`[CampaignDiscovery] Body: ${responseBody}`);
-      throw new Error('Rate limited');
-    }
-    if (!response.ok) {
-      logError(`[CampaignDiscovery] ❌ HTTP ${responseStatus} Error`);
-      logError(`[CampaignDiscovery] Body: ${responseBody}`);
-      throw new Error(`HTTP ${responseStatus}: ${responseStatusText}`);
-    }
-    
-    logInfo(`[CampaignDiscovery] ✅ Response OK (200)`);
-    logInfo(`[CampaignDiscovery] ═════════════════════════════════════════`);
+      const data = await response.json();
 
-    let result;
-    try {
-      result = JSON.parse(responseBody);
-    } catch (parseError: any) {
-      logError(`[CampaignDiscovery] ❌ JSON Parse Error: ${parseError.message}`);
-      logError(`[CampaignDiscovery] Response Body was: ${responseBody}`);
-      throw new Error(`Failed to parse JSON response: ${parseError.message}`);
-    }
-    
-    if (result.errors) {
-      const errorMsg = result.errors.map((e: any) => e.message).join(', ');
-      logError(`[CampaignDiscovery] ❌ GraphQL Errors: ${errorMsg}`);
-      logError(`[CampaignDiscovery] Full Errors: ${JSON.stringify(result.errors, null, 2)}`);
-      throw new Error(`GraphQL error: ${errorMsg}`);
-    }
+      // The response structure might vary, log it for debugging
+      logDebug(`[CampaignDiscovery] Helix response: ${JSON.stringify(data).substring(0, 500)}`);
 
-    return result;
+      // Parse the response based on actual structure
+      if (data.data && Array.isArray(data.data)) {
+        return data.data;
+      } else if (data.drop_campaigns && Array.isArray(data.drop_campaigns)) {
+        return data.drop_campaigns;
+      } else if (data.campaigns && Array.isArray(data.campaigns)) {
+        return data.campaigns;
+      }
+
+      // If we can't find campaigns in the response, return empty array
+      logWarn('[CampaignDiscovery] Unexpected Helix API response structure');
+      return [];
+    } catch (e: any) {
+      logError(`[CampaignDiscovery] Helix API fetch error: ${e.message}`);
+      throw e;
+    }
   }
 
   private processCampaign(campaign: any): boolean {
     try {
-      // Extract campaign data from updated schema
-      const campaignId = campaign.id;
-      const name = campaign.name || 'Unknown Campaign';
-      const game = campaign.game?.displayName || null;
-      const imageUrl = campaign.imageURL || campaign.image_url || null;
-      const status = campaign.status || 'active';
-      const requiredMinutes = 0; // We'll get this from drop indexing service
+      // Handle various possible response structures
+      const campaignId = campaign.id || campaign.campaign_id;
+      const name = campaign.name || campaign.title || 'Unknown Campaign';
+      const game = campaign.game?.name || campaign.game?.displayName || campaign.game_name || null;
+      const imageUrl = campaign.image_url || campaign.imageURL || campaign.image || null;
+      const status = campaign.status || 'ACTIVE';
+      const requiredMinutes = campaign.required_minutes_watch || campaign.requiredMinutes || 0;
+
+      if (!campaignId) {
+        logWarn('[CampaignDiscovery] Skipping campaign without ID');
+        return false;
+      }
 
       // Upsert campaign into database
       db.prepare(`
@@ -222,7 +134,7 @@ class CampaignDiscoveryService {
           last_updated = excluded.last_updated
       `).run(campaignId, name, game, requiredMinutes, status, imageUrl);
 
-      logInfo(`[CampaignDiscovery] ✅ Campaign discovered: ${name} (${game})`);
+      logInfo(`[CampaignDiscovery] ✅ Campaign: ${name} (${game}) - ${requiredMinutes}min`);
       return true;
     } catch (e: any) {
       logError(`[CampaignDiscovery] Error processing campaign: ${e.message}`);
@@ -231,9 +143,7 @@ class CampaignDiscoveryService {
   }
 
   private getClientId(): string {
-    logInfo('[CampaignDiscovery] DEBUG: Querying settings table for twitchClientId...');
     const row: any = db.prepare(`SELECT value FROM settings WHERE key='twitchClientId'`).get();
-    logInfo(`[CampaignDiscovery] DEBUG: Settings query result: ${row ? 'Found' : 'NOT FOUND'}`);
     return row?.value || process.env.TWITCH_CLIENT_ID || '';
   }
 }
